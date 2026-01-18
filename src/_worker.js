@@ -2,221 +2,231 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const targetUrl = url.searchParams.get("url");
 
-    // Handle CORS
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
-      });
-    }
-
-    // Validation
-    if (!targetUrl) {
-      return new Response(JSON.stringify({ error: "Missing url parameter" }), {
-        status: 400,
-        headers: { 
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*" 
-        },
-      });
-    }
-
-    const userAgents = [
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
-    ];
-    
-    const getHeaders = () => ({
-        "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    });
-
-    try {
-      // 1. Initial Fetch with Timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); 
-      
-      const response = await fetch(targetUrl, { 
-          headers: getHeaders(),
-          signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      const html = await response.text();
-
-      // --- Extraction Logic ---
-      const extractPrice = (text) => {
-        const priceRegexes = [
-           /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
-           /<span[^>]*class=["'][^"']*aok-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
-           /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\d.,]+)<\/span>/i,
-           /id="priceblock_ourprice"[^>]*>([\d.,$€£]+)</i,
-           /id="priceblock_dealprice"[^>]*>([\d.,$€£]+)</i
-        ];
-        for (const rx of priceRegexes) {
-            const match = text.match(rx);
-            if (match && match[1]) {
-                return match[1].trim();
-            }
+    // 1. Handle API Route: /api/scrape
+    if (url.pathname.startsWith('/api/scrape')) {
+        // Handle CORS for API
+        if (request.method === "OPTIONS") {
+            return new Response(null, {
+                headers: {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type",
+                },
+            });
         }
-        return "N/A";
-      };
 
-      const parentPrice = extractPrice(html);
-      
-      let currentAsin = null;
-      const asinMatch = html.match(/<input[^>]+id="ASIN"[^>]+value="(\w+)"/i) || html.match(/name="ASIN\.0"[^>]+value="(\w+)"/i);
-      if (asinMatch) currentAsin = asinMatch[1];
+        const targetUrl = url.searchParams.get("url");
 
-      let variants = [];
-      let message = "";
-      let success = false;
-      const baseUrl = new URL(targetUrl).origin;
+        if (!targetUrl) {
+            return new Response(JSON.stringify({ error: "Missing url parameter" }), {
+                status: 400,
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*" 
+                },
+            });
+        }
 
-      // Parsing Strategy 1: Classic
-      const classicRegex = /dimensionValuesDisplayData"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
-      const asinMapRegex = /asinToDimensionIndexMap"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
-      const classicMatch = html.match(classicRegex);
-      const mapMatch = html.match(asinMapRegex);
+        const userAgents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+        ];
+        
+        const getHeaders = () => ({
+            "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        });
 
-      if (classicMatch && mapMatch) {
-          try {
-             const cleanJson = (str) => str.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-             const variationValues = JSON.parse(cleanJson(classicMatch[1]));
-             const asinMap = JSON.parse(cleanJson(mapMatch[1]));
-             const dimensions = Object.keys(variationValues);
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); 
+            
+            const response = await fetch(targetUrl, { 
+                headers: getHeaders(),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
 
-             for (const [asin, indices] of Object.entries(asinMap)) {
-                const variantDimensions = {};
-                const nameParts = [];
-                dimensions.forEach((dimKey, i) => {
-                    const val = variationValues[dimKey][indices[i]];
-                    variantDimensions[dimKey] = val;
-                    nameParts.push(val);
-                });
+            const html = await response.text();
 
-                variants.push({
-                    name: nameParts.join(" / "),
-                    asin: asin,
-                    price: (asin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
-                    url: `${baseUrl}/dp/${asin}`,
-                    dimensions: variantDimensions
-                });
-             }
-             success = true;
-             message = `Found ${variants.length} variants (Classic Method).`;
-          } catch (e) {
-              console.log("Worker Classic Parse Error", e);
-          }
-      }
+            // --- Extraction Logic ---
+            const extractPrice = (text) => {
+                const priceRegexes = [
+                /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
+                /<span[^>]*class=["'][^"']*aok-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
+                /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\d.,]+)<\/span>/i,
+                /id="priceblock_ourprice"[^>]*>([\d.,$€£]+)</i,
+                /id="priceblock_dealprice"[^>]*>([\d.,$€£]+)</i
+                ];
+                for (const rx of priceRegexes) {
+                    const match = text.match(rx);
+                    if (match && match[1]) {
+                        return match[1].trim();
+                    }
+                }
+                return "N/A";
+            };
 
-      // Parsing Strategy 2: Twister Plus
-      if (!success) {
-          const newTwisterRegex = /data-a-state="{&quot;key&quot;:&quot;desktop-twister-sort-filter-data&quot;}">\s*({[\s\S]*?})\s*<\/script>/;
-          const newMatch = html.match(newTwisterRegex);
+            const parentPrice = extractPrice(html);
+            
+            let currentAsin = null;
+            const asinMatch = html.match(/<input[^>]+id="ASIN"[^>]+value="(\w+)"/i) || html.match(/name="ASIN\.0"[^>]+value="(\w+)"/i);
+            if (asinMatch) currentAsin = asinMatch[1];
 
-          if (newMatch) {
-              try {
-                  const data = JSON.parse(newMatch[1]);
-                  if (data.sortedDimValuesForAllDims) {
-                      const dimKeys = Object.keys(data.sortedDimValuesForAllDims);
-                      const selectedValues = {};
-                      dimKeys.forEach(key => {
-                          const vals = data.sortedDimValuesForAllDims[key];
-                          const sel = vals.find(v => v.dimensionValueState === 'SELECTED');
-                          if(sel) selectedValues[key] = sel.dimensionValueDisplayText;
-                      });
+            let variants = [];
+            let message = "";
+            let success = false;
+            const baseUrl = new URL(targetUrl).origin;
 
-                      const seenAsins = new Set();
-                      dimKeys.forEach(targetDim => {
-                          const values = data.sortedDimValuesForAllDims[targetDim];
-                          values.forEach(v => {
-                              if (v.defaultAsin && !seenAsins.has(v.defaultAsin)) {
-                                  const vDims = { ...selectedValues };
-                                  vDims[targetDim] = v.dimensionValueDisplayText;
-                                  const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
-                                  variants.push({
-                                      name: nameParts.join(" / "),
-                                      asin: v.defaultAsin,
-                                      price: (v.defaultAsin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
-                                      url: `${baseUrl}/dp/${v.defaultAsin}`,
-                                      dimensions: vDims
-                                  });
-                                  seenAsins.add(v.defaultAsin);
-                              }
-                          });
-                      });
-                      if(variants.length > 0) {
-                          success = true;
-                          message = `Found ${variants.length} variants (Twister Plus).`;
-                      }
-                  }
-              } catch (e) {
-                  console.log("Worker NewTwister Parse Error", e);
-              }
-          }
-      }
+            // Parsing Strategy 1: Classic
+            const classicRegex = /dimensionValuesDisplayData"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
+            const asinMapRegex = /asinToDimensionIndexMap"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
+            const classicMatch = html.match(classicRegex);
+            const mapMatch = html.match(asinMapRegex);
 
-      // 4. Bulk Scrape Prices (Parallel)
-      if (success && variants.length > 0) {
-          const fetchVariantPrice = async (variant) => {
-              if (variant.price !== "Requires Page Visit") return;
-              try {
-                  const subController = new AbortController();
-                  const subTimeout = setTimeout(() => subController.abort(), 6000);
-                  const res = await fetch(variant.url, { 
-                      headers: getHeaders(),
-                      signal: subController.signal 
-                  });
-                  clearTimeout(subTimeout);
-                  if (!res.ok) throw new Error("Fetch failed");
-                  const text = await res.text();
-                  const p = extractPrice(text);
-                  variant.price = p !== "N/A" ? p : "Unavailable";
-              } catch (err) {
-                  variant.price = "Fetch Failed";
-              }
-          };
+            if (classicMatch && mapMatch) {
+                try {
+                    const cleanJson = (str) => str.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+                    const variationValues = JSON.parse(cleanJson(classicMatch[1]));
+                    const asinMap = JSON.parse(cleanJson(mapMatch[1]));
+                    const dimensions = Object.keys(variationValues);
 
-          const MAX_REQUESTS = 48; 
-          const variantsToFetch = variants
-             .filter(v => v.price === "Requires Page Visit")
-             .slice(0, MAX_REQUESTS);
+                    for (const [asin, indices] of Object.entries(asinMap)) {
+                        const variantDimensions = {};
+                        const nameParts = [];
+                        dimensions.forEach((dimKey, i) => {
+                            const val = variationValues[dimKey][indices[i]];
+                            variantDimensions[dimKey] = val;
+                            nameParts.push(val);
+                        });
 
-          if (variantsToFetch.length > 0) {
-              message += ` Bulk scraping ${variantsToFetch.length} items...`;
-              await Promise.all(variantsToFetch.map(v => fetchVariantPrice(v)));
-          }
-      }
+                        variants.push({
+                            name: nameParts.join(" / "),
+                            asin: asin,
+                            price: (asin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
+                            url: `${baseUrl}/dp/${asin}`,
+                            dimensions: variantDimensions
+                        });
+                    }
+                    success = true;
+                    message = `Found ${variants.length} variants (Classic Method).`;
+                } catch (e) {
+                    console.log("Worker Classic Parse Error", e);
+                }
+            }
 
-      // Always return JSON
-      const result = {
-          success,
-          variants,
-          parentPrice,
-          message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
-          debugInfo: "Processed by Cloudflare Worker (JSON Only)"
-      };
+            // Parsing Strategy 2: Twister Plus
+            if (!success) {
+                const newTwisterRegex = /data-a-state="{&quot;key&quot;:&quot;desktop-twister-sort-filter-data&quot;}">\s*({[\s\S]*?})\s*<\/script>/;
+                const newMatch = html.match(newTwisterRegex);
 
-      return new Response(JSON.stringify(result), {
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
+                if (newMatch) {
+                    try {
+                        const data = JSON.parse(newMatch[1]);
+                        if (data.sortedDimValuesForAllDims) {
+                            const dimKeys = Object.keys(data.sortedDimValuesForAllDims);
+                            const selectedValues = {};
+                            dimKeys.forEach(key => {
+                                const vals = data.sortedDimValuesForAllDims[key];
+                                const sel = vals.find(v => v.dimensionValueState === 'SELECTED');
+                                if(sel) selectedValues[key] = sel.dimensionValueDisplayText;
+                            });
 
-    } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-      });
+                            const seenAsins = new Set();
+                            dimKeys.forEach(targetDim => {
+                                const values = data.sortedDimValuesForAllDims[targetDim];
+                                values.forEach(v => {
+                                    if (v.defaultAsin && !seenAsins.has(v.defaultAsin)) {
+                                        const vDims = { ...selectedValues };
+                                        vDims[targetDim] = v.dimensionValueDisplayText;
+                                        const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
+                                        variants.push({
+                                            name: nameParts.join(" / "),
+                                            asin: v.defaultAsin,
+                                            price: (v.defaultAsin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
+                                            url: `${baseUrl}/dp/${v.defaultAsin}`,
+                                            dimensions: vDims
+                                        });
+                                        seenAsins.add(v.defaultAsin);
+                                    }
+                                });
+                            });
+                            if(variants.length > 0) {
+                                success = true;
+                                message = `Found ${variants.length} variants (Twister Plus).`;
+                            }
+                        }
+                    } catch (e) {
+                        console.log("Worker NewTwister Parse Error", e);
+                    }
+                }
+            }
+
+            // 4. Bulk Scrape Prices (Parallel)
+            if (success && variants.length > 0) {
+                const fetchVariantPrice = async (variant) => {
+                    if (variant.price !== "Requires Page Visit") return;
+                    try {
+                        const subController = new AbortController();
+                        const subTimeout = setTimeout(() => subController.abort(), 6000);
+                        const res = await fetch(variant.url, { 
+                            headers: getHeaders(),
+                            signal: subController.signal 
+                        });
+                        clearTimeout(subTimeout);
+                        if (!res.ok) throw new Error("Fetch failed");
+                        const text = await res.text();
+                        const p = extractPrice(text);
+                        variant.price = p !== "N/A" ? p : "Unavailable";
+                    } catch (err) {
+                        variant.price = "Fetch Failed";
+                    }
+                };
+
+                const MAX_REQUESTS = 48; 
+                const variantsToFetch = variants
+                    .filter(v => v.price === "Requires Page Visit")
+                    .slice(0, MAX_REQUESTS);
+
+                if (variantsToFetch.length > 0) {
+                    message += ` Bulk scraping ${variantsToFetch.length} items...`;
+                    await Promise.all(variantsToFetch.map(v => fetchVariantPrice(v)));
+                }
+            }
+
+            const result = {
+                success,
+                variants,
+                parentPrice,
+                message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
+                debugInfo: "Processed by Cloudflare Worker (JSON Only)"
+            };
+
+            return new Response(JSON.stringify(result), {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            });
+
+        } catch (error) {
+            return new Response(JSON.stringify({ error: error.message }), {
+                status: 500,
+                headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+            });
+        }
     }
+
+    // 2. Fallback for non-API routes (Static Assets)
+    // This allows the React app to load when visiting /. 
+    // If env.ASSETS is undefined, it might be a standalone worker, so we return 404.
+    if (env.ASSETS) {
+        return env.ASSETS.fetch(request);
+    }
+    
+    return new Response("Not found", { status: 404 });
   },
 };
