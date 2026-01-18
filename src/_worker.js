@@ -25,7 +25,7 @@ export default {
           status: 400,
           headers: { 
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*" 
+            "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev" 
           },
         });
       }
@@ -238,4 +238,5 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
+
 
