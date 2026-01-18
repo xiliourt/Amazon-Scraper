@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { parseAmazonHtml, getPriceFromHtml } from '../utils/amazonScraper';
 import { fetchViaProxy } from '../services/proxyService';
 import { ScrapingResult, VariantData } from '../types';
@@ -15,20 +15,18 @@ export const ExtractorTab: React.FC = () => {
   // Result State
   const [result, setResult] = useState<ScrapingResult | null>(null);
   
-  // Bulk Price Fetch State
+  // Bulk Price Fetch State (Only for manual mode fallback)
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
   const [priceProgress, setPriceProgress] = useState('');
   
-  // Ref to track the current result ID to prevent race conditions from old fetch loops
   const resultIdRef = useRef<number>(0);
 
   const handleParse = useCallback(() => {
     if (!htmlInput.trim()) return;
-    // Pass fetchUrl as context if available to help with domain resolution
     const data = parseAmazonHtml(htmlInput, fetchUrl);
-    resultIdRef.current += 1; // Increment ID to invalidate old loops
+    resultIdRef.current += 1;
     setResult(data);
-    setIsFetchingPrices(false); // Stop any ongoing fetching
+    setIsFetchingPrices(false);
     setPriceProgress('');
   }, [htmlInput, fetchUrl]);
 
@@ -46,16 +44,13 @@ export const ExtractorTab: React.FC = () => {
       const response = await fetchViaProxy(fetchUrl);
       
       if (typeof response === 'string') {
-          // Received HTML (Client-side scraping)
-          setHtmlInput(response); 
-          const data = parseAmazonHtml(response, fetchUrl);
-          setResult(data);
+          // If we receive a string in Auto Mode, it means the Worker is not returning JSON.
+          // This usually happens if the /api/scrape route hits the React app (index.html) instead of the Worker.
+          console.warn("Received HTML from proxy service:", response.substring(0, 200));
+          setFetchError("Worker configuration error: Received HTML instead of JSON. Ensure the worker is running at /api/scrape.");
       } else {
           // Received Pre-parsed JSON (Server-side scraping)
           setResult(response);
-          // If the backend failed to parse but returned a result object with failure, 
-          // we can't easily populate htmlInput unless the API returned it.
-          // For now, we trust the backend's message.
       }
     } catch (e) {
       setFetchError((e as Error).message);
@@ -73,26 +68,20 @@ export const ExtractorTab: React.FC = () => {
     resultIdRef.current += 1;
   };
 
+  // Only used if partial data is returned or manual parsing
   const fetchMissingPrices = async () => {
     if (!result || !result.variants) return;
     
     const currentRunId = resultIdRef.current;
     setIsFetchingPrices(true);
     
-    // Create a copy to iterate, but we will update state functionally
     const variantsToProcess = result.variants.map((v, i) => ({ ...v, originalIndex: i }));
 
-    // Helper to safely update state
     const updateVariantPrice = (index: number, price: string) => {
         setResult(prev => {
-            // Guard: If result was cleared or changed drastically (race condition), don't update
             if (!prev || !prev.variants) return prev;
-            
-            // Guard: Index out of bounds check
             if (index < 0 || index >= prev.variants.length) return prev;
-
             const newVariants = [...prev.variants];
-            // Safe update ensuring we don't destroy existing properties like 'dimensions'
             if (newVariants[index]) {
                 newVariants[index] = { ...newVariants[index], price };
             }
@@ -104,15 +93,11 @@ export const ExtractorTab: React.FC = () => {
     const targets = variantsToProcess.filter(v => v.price === "Requires Page Visit");
 
     for (const v of targets) {
-        // Stop if the user cleared results or parsed new HTML during fetch
         if (currentRunId !== resultIdRef.current) break;
 
         setPriceProgress(`Fetching ${processed + 1} of ${targets.length}: ${v.name}`);
         try {
-            // Delay to be polite
             if (processed > 0) await new Promise(r => setTimeout(r, 1000));
-            
-            // Double check cancellation after delay
             if (currentRunId !== resultIdRef.current) break;
 
             const response = await fetchViaProxy(v.url);
@@ -121,8 +106,6 @@ export const ExtractorTab: React.FC = () => {
             if (typeof response === 'string') {
                 price = getPriceFromHtml(response);
             } else {
-                // If the worker returns a scraping result object for a single page, 
-                // we assume parentPrice is the price of that variant.
                 price = response.parentPrice || "N/A";
             }
             
@@ -144,11 +127,9 @@ export const ExtractorTab: React.FC = () => {
     }
   };
 
-  // Determine dynamic columns based on the dimensions present in the first variant
   const dimensionKeys = useMemo(() => {
     if (!result?.variants || result.variants.length === 0) return [];
     const firstVariant = result.variants[0];
-    // Safety check if dimensions is undefined
     if (!firstVariant || !firstVariant.dimensions) return [];
     return Object.keys(firstVariant.dimensions);
   }, [result]);
@@ -162,9 +143,9 @@ export const ExtractorTab: React.FC = () => {
       
       {/* SECTION 1: AUTO FETCH */}
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm">
-        <h2 className="text-xl font-semibold text-white mb-4">Option 1: Fetch via Proxy/Backend</h2>
+        <h2 className="text-xl font-semibold text-white mb-4">Option 1: Fetch via Worker (JSON)</h2>
         <p className="text-slate-400 text-sm mb-4">
-          Attempt to fetch the Amazon page directly. This will use the configured backend worker if available, falling back to client-side proxies.
+          This uses the deployed Cloudflare Worker to scrape variant data and prices server-side.
         </p>
         
         <div className="flex gap-2">
@@ -206,7 +187,7 @@ export const ExtractorTab: React.FC = () => {
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm">
         <h2 className="text-xl font-semibold text-white mb-4">Option 2: Manual Source Paste</h2>
         <p className="text-slate-400 text-sm mb-4">
-          If the fetcher is blocked: Go to the product page &rarr; Right Click &rarr; View Page Source &rarr; Copy All &rarr; Paste below.
+          Fallback: Go to product page &rarr; Right Click &rarr; View Page Source &rarr; Copy All &rarr; Paste below.
         </p>
         
         <div className="relative">
@@ -294,12 +275,9 @@ export const ExtractorTab: React.FC = () => {
                   <thead className="bg-slate-900 text-xs uppercase text-slate-300 font-semibold">
                     <tr>
                       <th className="px-6 py-4">Variant Name</th>
-                      
-                      {/* Dynamic Dimension Headers */}
                       {dimensionKeys.map(key => (
                         <th key={key} className="px-6 py-4 text-emerald-400">{key.replace(/_/g, ' ')}</th>
                       ))}
-
                       <th className="px-6 py-4">ASIN</th>
                       <th className="px-6 py-4">Price</th>
                       <th className="px-6 py-4 text-right">Action</th>
@@ -309,14 +287,11 @@ export const ExtractorTab: React.FC = () => {
                     {result.variants.map((v: VariantData, idx) => (
                       <tr key={`${v.asin}-${idx}`} className="hover:bg-slate-700/50 transition-colors">
                         <td className="px-6 py-4 font-medium text-white">{v.name}</td>
-                        
-                        {/* Dynamic Dimension Values - Safe Access */}
                         {dimensionKeys.map(key => (
                           <td key={key} className="px-6 py-4 text-slate-300">
                             {v.dimensions?.[key] || '-'}
                           </td>
                         ))}
-
                         <td className="px-6 py-4 font-mono text-indigo-300">{v.asin}</td>
                         <td className="px-6 py-4">
                            {v.price === "Requires Page Visit" ? (
