@@ -1,12 +1,10 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
-import { parseAmazonHtml, getPriceFromHtml } from '../utils/amazonScraper';
+
+import React, { useState, useMemo, useRef } from 'react';
+import { getPriceFromHtml } from '../utils/amazonScraper';
 import { fetchViaProxy } from '../services/proxyService';
 import { ScrapingResult, VariantData } from '../types';
 
 export const ExtractorTab: React.FC = () => {
-  // Manual Input State
-  const [htmlInput, setHtmlInput] = useState('');
-  
   // Fetcher State
   const [fetchUrl, setFetchUrl] = useState('');
   const [isFetching, setIsFetching] = useState(false);
@@ -15,27 +13,17 @@ export const ExtractorTab: React.FC = () => {
   // Result State
   const [result, setResult] = useState<ScrapingResult | null>(null);
   
-  // Bulk Price Fetch State (Only for manual mode fallback)
+  // Bulk Price Fetch State
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
   const [priceProgress, setPriceProgress] = useState('');
   
   const resultIdRef = useRef<number>(0);
-
-  const handleParse = useCallback(() => {
-    if (!htmlInput.trim()) return;
-    const data = parseAmazonHtml(htmlInput, fetchUrl);
-    resultIdRef.current += 1;
-    setResult(data);
-    setIsFetchingPrices(false);
-    setPriceProgress('');
-  }, [htmlInput, fetchUrl]);
 
   const handleFetch = async () => {
     if (!fetchUrl) return;
     setIsFetching(true);
     setFetchError('');
     setResult(null);
-    setHtmlInput(''); 
     setIsFetchingPrices(false);
     setPriceProgress('');
     resultIdRef.current += 1;
@@ -59,16 +47,7 @@ export const ExtractorTab: React.FC = () => {
     }
   };
 
-  const handleClear = () => {
-    setHtmlInput('');
-    setResult(null);
-    setFetchError('');
-    setIsFetchingPrices(false);
-    setPriceProgress('');
-    resultIdRef.current += 1;
-  };
-
-  // Only used if partial data is returned or manual parsing
+  // Only used if partial data is returned
   const fetchMissingPrices = async () => {
     if (!result || !result.variants) return;
     
@@ -143,7 +122,7 @@ export const ExtractorTab: React.FC = () => {
       
       {/* SECTION 1: AUTO FETCH */}
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm">
-        <h2 className="text-xl font-semibold text-white mb-4">Option 1: Fetch via Worker (JSON)</h2>
+        <h2 className="text-xl font-semibold text-white mb-4">Fetch via Worker</h2>
         <p className="text-slate-400 text-sm mb-4">
           This uses the deployed Cloudflare Worker to scrape variant data and prices server-side.
         </p>
@@ -181,39 +160,6 @@ export const ExtractorTab: React.FC = () => {
              <strong>Error:</strong> {fetchError}
           </div>
         )}
-      </div>
-
-      {/* SECTION 2: MANUAL PASTE */}
-      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm">
-        <h2 className="text-xl font-semibold text-white mb-4">Option 2: Manual Source Paste</h2>
-        <p className="text-slate-400 text-sm mb-4">
-          Fallback: Go to product page &rarr; Right Click &rarr; View Page Source &rarr; Copy All &rarr; Paste below.
-        </p>
-        
-        <div className="relative">
-          <textarea
-            value={htmlInput}
-            onChange={(e) => setHtmlInput(e.target.value)}
-            placeholder="Paste HTML source code here..."
-            className="w-full h-48 bg-slate-900 border border-slate-700 rounded-lg p-4 text-xs font-mono text-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none resize-y"
-          />
-          {htmlInput && (
-             <button 
-               onClick={handleClear}
-               className="absolute top-2 right-2 text-xs text-slate-500 hover:text-white bg-slate-800 px-2 py-1 rounded"
-             >
-               Clear
-             </button>
-          )}
-        </div>
-
-        <button
-          onClick={handleParse}
-          disabled={!htmlInput}
-          className="mt-4 w-full bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
-        >
-          Reprocess HTML
-        </button>
       </div>
 
       {result && (
