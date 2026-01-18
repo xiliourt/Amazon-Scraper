@@ -11,7 +11,7 @@ export default {
       if (request.method === "OPTIONS") {
         return new Response(null, {
           headers: {
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
           },
@@ -238,3 +238,4 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
+
