@@ -1,11 +1,7 @@
-import React, { useState } from 'react';
-import { AppTab } from './types';
+import React from 'react';
 import { ExtractorTab } from './components/ExtractorTab';
-import { GeneratorTab } from './components/GeneratorTab';
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AppTab>(AppTab.EXTRACTOR);
-
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 selection:bg-indigo-500/30">
       <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
@@ -18,50 +14,21 @@ const App: React.FC = () => {
              </div>
              <div>
                <h1 className="text-xl font-bold text-white tracking-tight">Amazon Scraper Tool</h1>
-               <p className="text-xs text-slate-500 font-medium">Frontend Parser & Script Generator</p>
+               <p className="text-xs text-slate-500 font-medium">Variant Extractor & Price Checker</p>
              </div>
           </div>
-          
-          <nav className="flex bg-slate-800/50 p-1 rounded-lg border border-slate-700/50">
-            <button
-              onClick={() => setActiveTab(AppTab.EXTRACTOR)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === AppTab.EXTRACTOR 
-                  ? 'bg-slate-700 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Manual Extractor
-            </button>
-            <button
-              onClick={() => setActiveTab(AppTab.GENERATOR)}
-               className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === AppTab.GENERATOR 
-                  ? 'bg-slate-700 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              AI Script Generator
-            </button>
-          </nav>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
-        {activeTab === AppTab.EXTRACTOR ? (
           <div className="animate-fade-in">
              <ExtractorTab />
           </div>
-        ) : (
-          <div className="animate-fade-in">
-            <GeneratorTab />
-          </div>
-        )}
       </main>
 
       <footer className="max-w-5xl mx-auto px-6 py-8 text-center border-t border-slate-800/50 mt-8">
         <p className="text-slate-600 text-xs">
-          Built with React 18, Tailwind, and Gemini. 
+          Built with React 18, Tailwind, and Cloudflare Workers. 
           <br/>
           This tool is for educational purposes. Respect Amazon's Terms of Service.
         </p>
