@@ -43,7 +43,7 @@ export default {
       // 1. Initial Fetch
       // Add a timeout to prevent hanging
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased timeout for bulk ops
       
       const response = await fetch(targetUrl, { 
           headers: getHeaders(),
@@ -192,7 +192,7 @@ export default {
               try {
                   // Short timeout for subrequests to ensure we return quickly
                   const subController = new AbortController();
-                  const subTimeout = setTimeout(() => subController.abort(), 5000);
+                  const subTimeout = setTimeout(() => subController.abort(), 6000);
 
                   const res = await fetch(variant.url, { 
                       headers: getHeaders(),
@@ -224,19 +224,13 @@ export default {
           }
       }
 
-      if (!success && variants.length === 0) {
-          // Fallback to client-side parsing if backend parsing failed entirely
-          return new Response(html, {
-            headers: { "Content-Type": "text/html", "Access-Control-Allow-Origin": "*" }
-          });
-      }
-
+      // Explicitly return JSON even if no variants found, do not fall back to HTML
       const result = {
           success,
           variants,
           parentPrice,
-          message: message || "Extraction complete",
-          debugInfo: "Processed by Cloudflare Worker (Single-Pass)"
+          message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
+          debugInfo: "Processed by Cloudflare Worker (Single-Pass JSON)"
       };
 
       return new Response(JSON.stringify(result), {
