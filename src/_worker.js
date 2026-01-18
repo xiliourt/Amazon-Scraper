@@ -1,13 +1,13 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const targetUrl = url.searchParams.get("url");
 
     // ============================================================
-    // LOGIC A: SCRAPING (Triggered if 'url' parameter exists)
+    // ROUTE 1: API REQUESTS (Only paths starting with /api)
     // ============================================================
-    if (targetUrl) {
-      // 1. Handle CORS (Allow all origins)
+    if (url.pathname.startsWith('/api')) {
+      
+      // 1. Handle CORS (Allow all origins for API)
       if (request.method === "OPTIONS") {
         return new Response(null, {
           headers: {
@@ -18,7 +18,19 @@ export default {
         });
       }
 
-      // 2. Setup Headers & User Agents
+      const targetUrl = url.searchParams.get("url");
+
+      if (!targetUrl) {
+        return new Response(JSON.stringify({ error: "Missing url parameter" }), {
+          status: 400,
+          headers: { 
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*" 
+          },
+        });
+      }
+
+      // --- Scraping Logic Starts Here ---
       const userAgents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -32,7 +44,6 @@ export default {
       });
 
       try {
-        // 3. Fetch the Parent Page
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -42,7 +53,6 @@ export default {
         });
         clearTimeout(timeoutId);
 
-        // Fail gracefully if Amazon blocks the request
         if (!response.ok) {
            return new Response(JSON.stringify({ error: `Target URL returned status ${response.status}` }), {
             status: response.status,
@@ -52,7 +62,7 @@ export default {
 
         const html = await response.text();
 
-        // --- Extraction Logic Starts ---
+        // Extraction Helpers
         const extractPrice = (text) => {
           const priceRegexes = [
             /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
@@ -63,15 +73,12 @@ export default {
           ];
           for (const rx of priceRegexes) {
             const match = text.match(rx);
-            if (match && match[1]) {
-              return match[1].trim();
-            }
+            if (match && match[1]) return match[1].trim();
           }
           return "N/A";
         };
 
         const parentPrice = extractPrice(html);
-
         let currentAsin = null;
         const asinMatch = html.match(/<input[^>]+id="ASIN"[^>]+value="(\w+)"/i) || html.match(/name="ASIN\.0"[^>]+value="(\w+)"/i);
         if (asinMatch) currentAsin = asinMatch[1];
@@ -140,9 +147,7 @@ export default {
                   const values = data.sortedDimValuesForAllDims[targetDim];
                   values.forEach(v => {
                     if (v.defaultAsin && !seenAsins.has(v.defaultAsin)) {
-                      const vDims = {
-                        ...selectedValues
-                      };
+                      const vDims = { ...selectedValues };
                       vDims[targetDim] = v.dimensionValueDisplayText;
                       const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
                       variants.push({
@@ -167,7 +172,7 @@ export default {
           }
         }
 
-        // 4. Bulk Scrape Prices (Parallel)
+        // Bulk Scrape Logic
         if (success && variants.length > 0) {
           const fetchVariantPrice = async (variant) => {
             if (variant.price !== "Requires Page Visit") return;
@@ -199,15 +204,13 @@ export default {
           }
         }
 
-        const result = {
+        return new Response(JSON.stringify({
           success,
           variants,
           parentPrice,
           message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
           debugInfo: "Processed by Cloudflare Worker (JSON Only)"
-        };
-
-        return new Response(JSON.stringify(result), {
+        }), {
           headers: {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
@@ -215,35 +218,23 @@ export default {
         });
 
       } catch (error) {
-        return new Response(JSON.stringify({
-          error: error.message
-        }), {
+        return new Response(JSON.stringify({ error: error.message }), {
           status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-          },
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
         });
       }
     }
 
     // ============================================================
-    // LOGIC B: STATIC ASSETS (Fallback if no 'url' param)
+    // ROUTE 2: STATIC ASSETS (Vite Output)
     // ============================================================
-    // This allows the React app to load when visiting / without a query param.
+    // Any path NOT starting with /api falls through here.
+    // This serves index.html, main.js, css, etc.
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
     }
 
-    // ============================================================
-    // LOGIC C: 404 (If no url param and no assets)
-    // ============================================================
-    return new Response(JSON.stringify({ error: "No URL parameter provided" }), {
-      status: 400,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*"
-      },
-    });
+    // Fallback if ASSETS are not available (e.g. strict local dev mode)
+    return new Response("Not Found", { status: 404 });
   },
 };
