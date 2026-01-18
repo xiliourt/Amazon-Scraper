@@ -230,11 +230,21 @@ export default {
     // ============================================================
     // Any path NOT starting with /api falls through here.
     // This serves index.html, main.js, css, etc.
+// ============================================================
+    // ROUTE 2: STATIC ASSETS (Vite Output)
+    // ============================================================
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
+    } else {
+      // DEBUG: If you see this, your wrangler.toml is missing [site] bucket = "./dist"
+      return new Response("Error: env.ASSETS is undefined. Check your wrangler.toml [site] configuration.", { 
+        status: 500, 
+        headers: { "Content-Type": "text/plain" } 
+      });
     }
 
     // Fallback if ASSETS are not available (e.g. strict local dev mode)
     return new Response("Not Found", { status: 404 });
   },
 };
+
