@@ -4,6 +4,12 @@ import { getPriceFromHtml } from '../utils/amazonScraper';
 import { fetchViaProxy } from '../services/proxyService';
 import { ScrapingResult, VariantData } from '../types';
 
+type SortDirection = 'asc' | 'desc';
+interface SortConfig {
+  key: string;
+  direction: SortDirection;
+}
+
 export const ExtractorTab: React.FC = () => {
   // Fetcher State
   const [fetchUrl, setFetchUrl] = useState('');
@@ -13,6 +19,9 @@ export const ExtractorTab: React.FC = () => {
   // Result State
   const [result, setResult] = useState<ScrapingResult | null>(null);
   
+  // Sorting State
+  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
+
   // Bulk Price Fetch State
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
   const [priceProgress, setPriceProgress] = useState('');
@@ -24,6 +33,7 @@ export const ExtractorTab: React.FC = () => {
     setIsFetching(true);
     setFetchError('');
     setResult(null);
+    setSortConfig(null); // Reset sort on new fetch
     setIsFetchingPrices(false);
     setPriceProgress('');
     resultIdRef.current += 1;
@@ -32,12 +42,9 @@ export const ExtractorTab: React.FC = () => {
       const response = await fetchViaProxy(fetchUrl);
       
       if (typeof response === 'string') {
-          // If we receive a string in Auto Mode, it means the Worker is not returning JSON.
-          // This usually happens if the /api/scrape route hits the React app (index.html) instead of the Worker.
           console.warn("Received HTML from proxy service:", response.substring(0, 200));
           setFetchError("Worker configuration error: Received HTML instead of JSON. Ensure the worker is running at /api/scrape.");
       } else {
-          // Received Pre-parsed JSON (Server-side scraping)
           setResult(response);
       }
     } catch (e) {
@@ -116,6 +123,84 @@ export const ExtractorTab: React.FC = () => {
   const hasMissingPrices = useMemo(() => {
       return result?.variants.some(v => v.price === "Requires Page Visit");
   }, [result]);
+
+  // --- Sorting Logic ---
+  const requestSort = (key: string) => {
+    let direction: SortDirection = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const sortedVariants = useMemo(() => {
+    if (!result?.variants) return [];
+    let items = [...result.variants];
+    
+    if (sortConfig) {
+      items.sort((a, b) => {
+        const { key, direction } = sortConfig;
+        
+        // Helper to extract numeric price for sorting
+        const getPriceVal = (p: string) => {
+             if (!p || p === "Requires Page Visit" || p === "N/A" || p === "Unavailable" || p === "Fetch Failed") return -1;
+             // Remove currency symbols and commas (assuming standard format like $1,200.00)
+             const clean = p.replace(/[^0-9.]/g, '');
+             const num = parseFloat(clean);
+             return isNaN(num) ? -1 : num;
+        };
+
+        if (key === 'price') {
+             const valA = getPriceVal(a.price);
+             const valB = getPriceVal(b.price);
+             
+             // Put invalid/unknown prices at the bottom always, or top?
+             // Let's put them at the bottom for ASC (cheapest first).
+             if (valA === -1 && valB === -1) return 0;
+             if (valA === -1) return 1; 
+             if (valB === -1) return -1;
+
+             return direction === 'asc' ? valA - valB : valB - valA;
+        } else {
+             // String Sorting
+             let valA = '';
+             let valB = '';
+
+             if (key === 'name') { valA = a.name; valB = b.name; }
+             else if (key === 'asin') { valA = a.asin; valB = b.asin; }
+             else {
+                 // Dimensions
+                 valA = a.dimensions?.[key] || '';
+                 valB = b.dimensions?.[key] || '';
+             }
+
+             return direction === 'asc' 
+                ? valA.localeCompare(valB) 
+                : valB.localeCompare(valA);
+        }
+      });
+    }
+    return items;
+  }, [result, sortConfig]);
+
+  const SortIcon = ({ active, direction }: { active: boolean, direction: SortDirection }) => {
+     if (!active) return <svg className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-50 transition-opacity ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>;
+     return direction === 'asc' 
+        ? <svg className="w-3 h-3 text-emerald-400 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+        : <svg className="w-3 h-3 text-emerald-400 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
+  };
+
+  const TableHeader = ({ label, sortKey, className = "" }: { label: string, sortKey: string, className?: string }) => (
+      <th 
+        className={`px-6 py-4 cursor-pointer group select-none hover:bg-slate-800 transition-colors ${className}`}
+        onClick={() => requestSort(sortKey)}
+      >
+        <div className="flex items-center">
+            {label}
+            <SortIcon active={sortConfig?.key === sortKey} direction={sortConfig?.direction || 'asc'} />
+        </div>
+      </th>
+  );
 
   return (
     <div className="space-y-6">
@@ -220,17 +305,17 @@ export const ExtractorTab: React.FC = () => {
                 <table className="w-full text-left text-sm text-slate-400">
                   <thead className="bg-slate-900 text-xs uppercase text-slate-300 font-semibold">
                     <tr>
-                      <th className="px-6 py-4">Variant Name</th>
+                      <TableHeader label="Variant Name" sortKey="name" />
                       {dimensionKeys.map(key => (
-                        <th key={key} className="px-6 py-4 text-emerald-400">{key.replace(/_/g, ' ')}</th>
+                        <TableHeader key={key} label={key.replace(/_/g, ' ')} sortKey={key} className="text-emerald-400" />
                       ))}
-                      <th className="px-6 py-4">ASIN</th>
-                      <th className="px-6 py-4">Price</th>
+                      <TableHeader label="ASIN" sortKey="asin" />
+                      <TableHeader label="Price" sortKey="price" />
                       <th className="px-6 py-4 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700">
-                    {result.variants.map((v: VariantData, idx) => (
+                    {sortedVariants.map((v: VariantData, idx) => (
                       <tr key={`${v.asin}-${idx}`} className="hover:bg-slate-700/50 transition-colors">
                         <td className="px-6 py-4 font-medium text-white">{v.name}</td>
                         {dimensionKeys.map(key => (
