@@ -1,17 +1,15 @@
 import { ScrapingResult } from '../types';
 
 /**
- * List of CORS Proxies to try sequentially.
- * Users can add their own proxies here.
- * Ensure the proxy supports appending the target URL as a query parameter or path.
+ * List of CORS Proxies.
+ * STRICT MODE: Only use the backend worker that returns JSON. 
+ * Do not fall back to generic proxies that return HTML.
  */
 export const CORS_PROXIES = [
-  // Cloudflare Worker Backend (Relative path assumes same domain hosting or proxy rule)
-  // If running locally with `npm start`, this might 404 unless a proxy is set up, 
-  // so it gracefully fails over to the next ones.
+  // Cloudflare Worker Backend
   '/api/scrape?url=', 
-  'https://cors.dylanacc009.workers.dev/?url=',
-  // Add your custom proxies here
+  // If you have a deployed worker, add it here:
+  // 'https://your-worker-name.your-subdomain.workers.dev/api/scrape?url='
 ];
 
 /**
@@ -22,7 +20,6 @@ export const CORS_PROXIES = [
 export const fetchViaProxy = async (targetUrl: string): Promise<string | ScrapingResult> => {
   const errors: string[] = [];
 
-  // Basic validation
   if (!targetUrl.startsWith('http')) {
     throw new Error("URL must start with http:// or https://");
   }
@@ -30,36 +27,28 @@ export const fetchViaProxy = async (targetUrl: string): Promise<string | Scrapin
   for (const proxyBase of CORS_PROXIES) {
     try {
       // Handle the local/worker endpoint specially if needed, but standard appending usually works
-      // Construct URL. We use encodeURIComponent to ensure the target URL 
-      // is treated as a single parameter by the proxy.
       let fullUrl = proxyBase.startsWith('/') 
-        ? `${proxyBase}${encodeURIComponent(targetUrl)}` // Local/Worker
-        : `${proxyBase}${encodeURIComponent(targetUrl)}`; // Remote Proxy
+        ? `${proxyBase}${encodeURIComponent(targetUrl)}` 
+        : `${proxyBase}${encodeURIComponent(targetUrl)}`; 
       
       console.log(`[ProxyService] Attempting fetch via: ${proxyBase}`);
       
       const response = await fetch(fullUrl);
       
       if (!response.ok) {
-        // Continue to next proxy if 404/500 etc
         throw new Error(`Status ${response.status} ${response.statusText}`);
       }
 
       const contentType = response.headers.get("content-type");
 
       if (contentType && contentType.includes("application/json")) {
-          // Backend did the work for us
           const data = await response.json();
           if (data.error) throw new Error(data.error);
           return data as ScrapingResult;
       } else {
-          // Standard HTML response
+          // If we get HTML here, it means the worker route is likely 404ing (hitting React index.html) 
+          // or the proxy is misconfigured.
           const text = await response.text();
-          
-          // Basic check to ensure we didn't just get an empty proxy error page
-          if (!text || text.length < 500) { 
-             throw new Error("Response too short or empty"); 
-          }
           return text;
       }
 
@@ -69,5 +58,5 @@ export const fetchViaProxy = async (targetUrl: string): Promise<string | Scrapin
     }
   }
 
-  throw new Error(`Failed to fetch via all proxies.\nErrors:\n${errors.join('\n')}`);
+  throw new Error(`Failed to fetch via worker.\nErrors:\n${errors.join('\n')}`);
 };
