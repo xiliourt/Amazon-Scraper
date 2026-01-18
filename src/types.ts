@@ -13,8 +13,3 @@ export interface ScrapingResult {
   message?: string;
   debugInfo?: string;
 }
-
-export enum AppTab {
-  EXTRACTOR = 'EXTRACTOR',
-  GENERATOR = 'GENERATOR'
-}
