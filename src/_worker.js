@@ -5,7 +5,7 @@ export default {
 
     // 1. Handle API Route: /api/scrape
     // strict check to avoid matching random assets
-    if (url.pathname === '/api/scrape') {
+    if (url.pathname.startsWith('/api/scrape')) {
         
         // Handle CORS for API
         if (request.method === "OPTIONS") {
@@ -281,3 +281,4 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 };
+
