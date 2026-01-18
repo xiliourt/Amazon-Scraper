@@ -3,13 +3,12 @@ import { ScrapingResult } from '../types';
 /**
  * List of CORS Proxies.
  * STRICT MODE: Only use the backend worker that returns JSON. 
- * Do not fall back to generic proxies that return HTML.
  */
 export const CORS_PROXIES = [
-  // Cloudflare Worker Backend
-  '/api/scrape?url=', 
-  // If you have a deployed worker, add it here:
-  // 'https://your-worker-name.your-subdomain.workers.dev/api/scrape?url='
+  // Cloudflare Worker Backend (Relative)
+  '/api/scrape?url=',
+  // External backup if local fails or isn't running
+  // 'https://your-worker.workers.dev/api/scrape?url=' 
 ];
 
 /**
@@ -26,7 +25,6 @@ export const fetchViaProxy = async (targetUrl: string): Promise<string | Scrapin
 
   for (const proxyBase of CORS_PROXIES) {
     try {
-      // Handle the local/worker endpoint specially if needed, but standard appending usually works
       let fullUrl = proxyBase.startsWith('/') 
         ? `${proxyBase}${encodeURIComponent(targetUrl)}` 
         : `${proxyBase}${encodeURIComponent(targetUrl)}`; 
@@ -36,20 +34,34 @@ export const fetchViaProxy = async (targetUrl: string): Promise<string | Scrapin
       const response = await fetch(fullUrl);
       
       if (!response.ok) {
+        // If 404/500, try next proxy
         throw new Error(`Status ${response.status} ${response.statusText}`);
       }
 
       const contentType = response.headers.get("content-type");
-
+      
+      // If content-type explicitly says json, parse it
       if (contentType && contentType.includes("application/json")) {
           const data = await response.json();
           if (data.error) throw new Error(data.error);
           return data as ScrapingResult;
-      } else {
-          // If we get HTML here, it means the worker route is likely 404ing (hitting React index.html) 
-          // or the proxy is misconfigured.
-          const text = await response.text();
-          return text;
+      } 
+      
+      // If not strictly JSON, we need to verify it's not HTML error page
+      const text = await response.text();
+      
+      // Heuristic: If it looks like HTML (starts with <), and we expected an API response, it's a failure of the proxy/routing
+      if (text.trim().startsWith('<') || text.includes('<!DOCTYPE html>')) {
+          throw new Error("Received HTML (likely index.html or 404 page) instead of JSON. Worker route not handled.");
+      }
+
+      // If it's some other string (unlikely), try to parse as JSON just in case
+      try {
+          const data = JSON.parse(text);
+          if (data.error) throw new Error(data.error);
+          return data as ScrapingResult;
+      } catch (e) {
+          throw new Error("Received invalid response format.");
       }
 
     } catch (err) {
@@ -58,5 +70,5 @@ export const fetchViaProxy = async (targetUrl: string): Promise<string | Scrapin
     }
   }
 
-  throw new Error(`Failed to fetch via worker.\nErrors:\n${errors.join('\n')}`);
+  throw new Error(`All proxies failed. Ensure the Cloudflare Worker is running at /api/scrape.\nErrors:\n${errors.join('\n')}`);
 };
