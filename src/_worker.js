@@ -3,7 +3,6 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
-    const mode = url.searchParams.get("mode") || "scrape"; // 'scrape' or 'proxy'
 
     // Handle CORS
     if (request.method === "OPTIONS") {
@@ -16,6 +15,7 @@ export default {
       });
     }
 
+    // Validation
     if (!targetUrl) {
       return new Response(JSON.stringify({ error: "Missing url parameter" }), {
         status: 400,
@@ -32,7 +32,6 @@ export default {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
     ];
     
-    // Helper to get headers
     const getHeaders = () => ({
         "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -40,10 +39,9 @@ export default {
     });
 
     try {
-      // 1. Initial Fetch
-      // Add a timeout to prevent hanging
+      // 1. Initial Fetch with Timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased timeout for bulk ops
+      const timeoutId = setTimeout(() => controller.abort(), 15000); 
       
       const response = await fetch(targetUrl, { 
           headers: getHeaders(),
@@ -53,17 +51,7 @@ export default {
 
       const html = await response.text();
 
-      // If purely proxy mode is requested, return HTML
-      if (mode === 'proxy') {
-        return new Response(html, {
-            headers: {
-                "Content-Type": "text/html",
-                "Access-Control-Allow-Origin": "*"
-            }
-        });
-      }
-
-      // --- Helper: Price Extraction ---
+      // --- Extraction Logic ---
       const extractPrice = (text) => {
         const priceRegexes = [
            /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
@@ -81,23 +69,20 @@ export default {
         return "N/A";
       };
 
-      // 2. Extract Parent Price & Current ASIN
       const parentPrice = extractPrice(html);
       
       let currentAsin = null;
       const asinMatch = html.match(/<input[^>]+id="ASIN"[^>]+value="(\w+)"/i) || html.match(/name="ASIN\.0"[^>]+value="(\w+)"/i);
       if (asinMatch) currentAsin = asinMatch[1];
 
-      // 3. Extract Variants
       let variants = [];
       let message = "";
       let success = false;
       const baseUrl = new URL(targetUrl).origin;
 
-      // Strategy 1: Classic (dimensionValuesDisplayData)
+      // Parsing Strategy 1: Classic
       const classicRegex = /dimensionValuesDisplayData"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
       const asinMapRegex = /asinToDimensionIndexMap"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
-
       const classicMatch = html.match(classicRegex);
       const mapMatch = html.match(asinMapRegex);
 
@@ -106,16 +91,13 @@ export default {
              const cleanJson = (str) => str.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
              const variationValues = JSON.parse(cleanJson(classicMatch[1]));
              const asinMap = JSON.parse(cleanJson(mapMatch[1]));
-             
              const dimensions = Object.keys(variationValues);
 
              for (const [asin, indices] of Object.entries(asinMap)) {
                 const variantDimensions = {};
                 const nameParts = [];
-                
                 dimensions.forEach((dimKey, i) => {
-                    const valIndex = indices[i];
-                    const val = variationValues[dimKey][valIndex];
+                    const val = variationValues[dimKey][indices[i]];
                     variantDimensions[dimKey] = val;
                     nameParts.push(val);
                 });
@@ -135,7 +117,7 @@ export default {
           }
       }
 
-      // Strategy 2: Newer (desktop-twister-sort-filter-data)
+      // Parsing Strategy 2: Twister Plus
       if (!success) {
           const newTwisterRegex = /data-a-state="{&quot;key&quot;:&quot;desktop-twister-sort-filter-data&quot;}">\s*({[\s\S]*?})\s*<\/script>/;
           const newMatch = html.match(newTwisterRegex);
@@ -160,7 +142,6 @@ export default {
                                   const vDims = { ...selectedValues };
                                   vDims[targetDim] = v.dimensionValueDisplayText;
                                   const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
-
                                   variants.push({
                                       name: nameParts.join(" / "),
                                       asin: v.defaultAsin,
@@ -172,7 +153,6 @@ export default {
                               }
                           });
                       });
-                      
                       if(variants.length > 0) {
                           success = true;
                           message = `Found ${variants.length} variants (Twister Plus).`;
@@ -184,22 +164,18 @@ export default {
           }
       }
 
-      // 4. Bulk Scrape Prices
+      // 4. Bulk Scrape Prices (Parallel)
       if (success && variants.length > 0) {
           const fetchVariantPrice = async (variant) => {
-              if (variant.price !== "Requires Page Visit") return; // Already have it
-
+              if (variant.price !== "Requires Page Visit") return;
               try {
-                  // Short timeout for subrequests to ensure we return quickly
                   const subController = new AbortController();
                   const subTimeout = setTimeout(() => subController.abort(), 6000);
-
                   const res = await fetch(variant.url, { 
                       headers: getHeaders(),
                       signal: subController.signal 
                   });
                   clearTimeout(subTimeout);
-
                   if (!res.ok) throw new Error("Fetch failed");
                   const text = await res.text();
                   const p = extractPrice(text);
@@ -209,8 +185,6 @@ export default {
               }
           };
 
-          // Cloudflare Workers limit subrequests to 50 per request.
-          // We use 48 to leave room for the initial fetch and potential retries/overhead.
           const MAX_REQUESTS = 48; 
           const variantsToFetch = variants
              .filter(v => v.price === "Requires Page Visit")
@@ -219,18 +193,16 @@ export default {
           if (variantsToFetch.length > 0) {
               message += ` Bulk scraping ${variantsToFetch.length} items...`;
               await Promise.all(variantsToFetch.map(v => fetchVariantPrice(v)));
-          } else if (variants.length > MAX_REQUESTS) {
-              message += ` (Limit reached: Only scraped first ${MAX_REQUESTS})`;
           }
       }
 
-      // Explicitly return JSON even if no variants found, do not fall back to HTML
+      // Always return JSON
       const result = {
           success,
           variants,
           parentPrice,
           message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
-          debugInfo: "Processed by Cloudflare Worker (Single-Pass JSON)"
+          debugInfo: "Processed by Cloudflare Worker (JSON Only)"
       };
 
       return new Response(JSON.stringify(result), {
