@@ -1,3 +1,4 @@
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -32,28 +33,38 @@ export default {
 
       // --- Scraping Logic Starts Here ---
       const userAgents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
       ];
 
-      const getHeaders = () => ({
-        "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-      });
+      // Dynamic headers based on target URL
+      const getHeaders = (target) => {
+        let origin = "https://www.amazon.com";
+        try { origin = new URL(target).origin; } catch(e){}
+        
+        return {
+            "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": origin + "/", // Mimic internal navigation
+            "Cache-Control": "no-cache",
+            "Upgrade-Insecure-Requests": "1"
+        };
+      };
 
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         const response = await fetch(targetUrl, {
-          headers: getHeaders(),
+          headers: getHeaders(targetUrl),
           signal: controller.signal
         });
         clearTimeout(timeoutId);
 
-        if (!response.ok) {
+        if (!response.ok && response.status !== 503) {
            return new Response(JSON.stringify({ error: `Target URL returned status ${response.status}` }), {
             status: response.status,
             headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -62,18 +73,59 @@ export default {
 
         const html = await response.text();
 
-        // Extraction Helpers
+        // --- Robust JSON Extractor (Brace Counting) ---
+        // Regex is bad for nested JSON. This finds the start and counts braces.
+        const extractJsonBlock = (source, startPattern) => {
+            const match = source.match(startPattern);
+            if (!match) return null;
+            
+            const startIndex = match.index + match[0].length;
+            let openBraces = 0;
+            let closeBraces = 0;
+            let jsonString = "";
+            let foundStart = false;
+
+            // Scan forward from the regex match to find the first '{'
+            for (let i = startIndex; i < source.length; i++) {
+                const char = source[i];
+                if (char === '{') {
+                    if (!foundStart) foundStart = true;
+                    openBraces++;
+                }
+                
+                if (foundStart) {
+                    jsonString += char;
+                    if (char === '}') {
+                        closeBraces++;
+                        // If balanced, we are done
+                        if (openBraces === closeBraces) {
+                            return jsonString;
+                        }
+                    }
+                } else if (!/\s/.test(char) && !foundStart) {
+                    // If we hit non-whitespace before '{', the pattern match was wrong
+                    return null;
+                }
+            }
+            return null;
+        };
+
         const extractPrice = (text) => {
           const priceRegexes = [
+            /<span[^>]*class="[^"]*a-price-whole[^"]*"[^>]*>([\d.,]+)<[^>]*><span[^>]*class="[^"]*a-price-fraction[^"]*"[^>]*>([\d]+)<\/span>/,
             /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
             /<span[^>]*class=["'][^"']*aok-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
-            /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\d.,]+)<\/span>/i,
             /id="priceblock_ourprice"[^>]*>([\d.,$€£]+)</i,
-            /id="priceblock_dealprice"[^>]*>([\d.,$€£]+)</i
+            /id="priceblock_dealprice"[^>]*>([\d.,$€£]+)</i,
+            /"priceAmount"\s*:\s*([\d.]+)/,
+            /"price"\s*:\s*"([\d.,$€£]+)"/
           ];
           for (const rx of priceRegexes) {
             const match = text.match(rx);
-            if (match && match[1]) return match[1].trim();
+            if (match) {
+                if (match.length === 3) return `${match[1]}.${match[2]}`;
+                return match[1].trim();
+            }
           }
           return "N/A";
         };
@@ -88,88 +140,101 @@ export default {
         let success = false;
         const baseUrl = new URL(targetUrl).origin;
 
-        // Strategy 1: Classic
-        const classicRegex = /dimensionValuesDisplayData"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
-        const asinMapRegex = /asinToDimensionIndexMap"\s*:\s*({[\s\S]*?})(?=\s*,\s*")/m;
-        const classicMatch = html.match(classicRegex);
-        const mapMatch = html.match(asinMapRegex);
+        const safeJsonParse = (str) => {
+            try {
+                return JSON.parse(str.replace(/&quot;/g, '"'));
+            } catch(e) { return null; }
+        };
 
-        if (classicMatch && mapMatch) {
+        // --- Strategy 1: Classic 'dimensionValuesDisplayData' ---
+        // Use brace counting instead of regex capture for the object
+        const classicJsonStr = extractJsonBlock(html, /dimensionValuesDisplayData"\s*:\s*/);
+        const mapJsonStr = extractJsonBlock(html, /asinToDimensionIndexMap"\s*:\s*/);
+
+        if (classicJsonStr && mapJsonStr) {
           try {
-            const cleanJson = (str) => str.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-            const variationValues = JSON.parse(cleanJson(classicMatch[1]));
-            const asinMap = JSON.parse(cleanJson(mapMatch[1]));
-            const dimensions = Object.keys(variationValues);
+            const variationValues = safeJsonParse(classicJsonStr);
+            const asinMap = safeJsonParse(mapJsonStr);
+            
+            if (variationValues && asinMap) {
+                const dimensions = Object.keys(variationValues);
+                for (const [asin, indices] of Object.entries(asinMap)) {
+                  const variantDimensions = {};
+                  const nameParts = [];
+                  dimensions.forEach((dimKey, i) => {
+                    const val = variationValues[dimKey][indices[i]];
+                    variantDimensions[dimKey] = val;
+                    nameParts.push(val);
+                  });
 
-            for (const [asin, indices] of Object.entries(asinMap)) {
-              const variantDimensions = {};
-              const nameParts = [];
-              dimensions.forEach((dimKey, i) => {
-                const val = variationValues[dimKey][indices[i]];
-                variantDimensions[dimKey] = val;
-                nameParts.push(val);
-              });
-
-              variants.push({
-                name: nameParts.join(" / "),
-                asin: asin,
-                price: (asin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
-                url: `${baseUrl}/dp/${asin}`,
-                dimensions: variantDimensions
-              });
+                  variants.push({
+                    name: nameParts.join(" / "),
+                    asin: asin,
+                    price: (asin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
+                    url: `${baseUrl}/dp/${asin}`,
+                    dimensions: variantDimensions
+                  });
+                }
+                if (variants.length > 0) {
+                    success = true;
+                    message = `Found ${variants.length} variants (Classic Method).`;
+                }
             }
-            success = true;
-            message = `Found ${variants.length} variants (Classic Method).`;
           } catch (e) {
             console.log("Worker Classic Parse Error", e);
           }
         }
 
-        // Strategy 2: Twister Plus
+        // --- Strategy 2: Twister Plus 'desktop-twister-sort-filter-data' ---
         if (!success) {
-          const newTwisterRegex = /data-a-state="{&quot;key&quot;:&quot;desktop-twister-sort-filter-data&quot;}">\s*({[\s\S]*?})\s*<\/script>/;
-          const newMatch = html.match(newTwisterRegex);
+           // Find the index of the specific key
+           const keyIndex = html.indexOf('desktop-twister-sort-filter-data');
+           if (keyIndex !== -1) {
+               // Find the next '>' after the key (closing the script tag attributes)
+               const tagClose = html.indexOf('>', keyIndex);
+               if (tagClose !== -1) {
+                   // Extract JSON starting immediately after '>' using an empty regex start pattern to trigger immediate brace scan
+                   const twisterJsonStr = extractJsonBlock(html.substring(tagClose), /^/); 
+                   
+                   if (twisterJsonStr) {
+                       const data = safeJsonParse(twisterJsonStr);
+                       if (data && data.sortedDimValuesForAllDims) {
+                           const dimKeys = Object.keys(data.sortedDimValuesForAllDims);
+                           const selectedValues = {};
+                           dimKeys.forEach(key => {
+                               const vals = data.sortedDimValuesForAllDims[key];
+                               const sel = vals.find(v => v.dimensionValueState === 'SELECTED');
+                               if(sel) selectedValues[key] = sel.dimensionValueDisplayText;
+                           });
 
-          if (newMatch) {
-            try {
-              const data = JSON.parse(newMatch[1]);
-              if (data.sortedDimValuesForAllDims) {
-                const dimKeys = Object.keys(data.sortedDimValuesForAllDims);
-                const selectedValues = {};
-                dimKeys.forEach(key => {
-                  const vals = data.sortedDimValuesForAllDims[key];
-                  const sel = vals.find(v => v.dimensionValueState === 'SELECTED');
-                  if (sel) selectedValues[key] = sel.dimensionValueDisplayText;
-                });
-
-                const seenAsins = new Set();
-                dimKeys.forEach(targetDim => {
-                  const values = data.sortedDimValuesForAllDims[targetDim];
-                  values.forEach(v => {
-                    if (v.defaultAsin && !seenAsins.has(v.defaultAsin)) {
-                      const vDims = { ...selectedValues };
-                      vDims[targetDim] = v.dimensionValueDisplayText;
-                      const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
-                      variants.push({
-                        name: nameParts.join(" / "),
-                        asin: v.defaultAsin,
-                        price: (v.defaultAsin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
-                        url: `${baseUrl}/dp/${v.defaultAsin}`,
-                        dimensions: vDims
-                      });
-                      seenAsins.add(v.defaultAsin);
-                    }
-                  });
-                });
-                if (variants.length > 0) {
-                  success = true;
-                  message = `Found ${variants.length} variants (Twister Plus).`;
-                }
-              }
-            } catch (e) {
-              console.log("Worker NewTwister Parse Error", e);
-            }
-          }
+                           const seenAsins = new Set();
+                           dimKeys.forEach(targetDim => {
+                               const values = data.sortedDimValuesForAllDims[targetDim];
+                               values.forEach(v => {
+                                   if (v.defaultAsin && !seenAsins.has(v.defaultAsin)) {
+                                       const vDims = { ...selectedValues };
+                                       vDims[targetDim] = v.dimensionValueDisplayText;
+                                       const nameParts = dimKeys.map(k => vDims[k] || 'Unknown');
+                                       
+                                       variants.push({
+                                           name: nameParts.join(" / "),
+                                           asin: v.defaultAsin,
+                                           price: (v.defaultAsin === currentAsin && parentPrice !== "N/A") ? parentPrice : "Requires Page Visit",
+                                           url: `${baseUrl}/dp/${v.defaultAsin}`,
+                                           dimensions: vDims
+                                       });
+                                       seenAsins.add(v.defaultAsin);
+                                   }
+                               });
+                           });
+                           if(variants.length > 0) {
+                               success = true;
+                               message = `Found ${variants.length} variants (Twister Plus).`;
+                           }
+                       }
+                   }
+               }
+           }
         }
 
         // Bulk Scrape Logic
@@ -180,7 +245,7 @@ export default {
               const subController = new AbortController();
               const subTimeout = setTimeout(() => subController.abort(), 6000);
               const res = await fetch(variant.url, {
-                headers: getHeaders(),
+                headers: getHeaders(variant.url),
                 signal: subController.signal
               });
               clearTimeout(subTimeout);
@@ -208,8 +273,8 @@ export default {
           success,
           variants,
           parentPrice,
-          message: message || (success ? "Extraction complete" : "No variants found or extraction failed"),
-          debugInfo: "Processed by Cloudflare Worker (JSON Only)"
+          message: message || (success ? "Extraction complete" : "No variants found or page is Captcha/Protected"),
+          debugInfo: `Processed by Cloudflare Worker v4 (JSON Safe). Origin: ${baseUrl}`
         }), {
           headers: {
             "Content-Type": "application/json",
@@ -218,7 +283,7 @@ export default {
         });
 
       } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
+        return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
           status: 500,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
         });
@@ -228,23 +293,15 @@ export default {
     // ============================================================
     // ROUTE 2: STATIC ASSETS (Vite Output)
     // ============================================================
-    // Any path NOT starting with /api falls through here.
-    // This serves index.html, main.js, css, etc.
-// ============================================================
-    // ROUTE 2: STATIC ASSETS (Vite Output)
-    // ============================================================
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
     } else {
-      // DEBUG: If you see this, your wrangler.toml is missing [site] bucket = "./dist"
       return new Response("Error: env.ASSETS is undefined. Check your wrangler.toml [site] configuration.", { 
         status: 500, 
         headers: { "Content-Type": "text/plain" } 
       });
     }
 
-    // Fallback if ASSETS are not available (e.g. strict local dev mode)
     return new Response("Not Found", { status: 404 });
   },
 };
-
