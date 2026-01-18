@@ -1,4 +1,4 @@
-name = "awsscraper"
+name = "amazon"
 main = "src/_worker.js"
 compatibility_date = "2024-01-01"
 
