@@ -11,7 +11,7 @@ export default {
       if (request.method === "OPTIONS") {
         return new Response(null, {
           headers: {
-            "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev",
+            "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
           },
@@ -25,7 +25,7 @@ export default {
           status: 400,
           headers: { 
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev" 
+            "Access-Control-Allow-Origin": "*" 
           },
         });
       }
@@ -65,15 +65,24 @@ export default {
         // Extraction Helpers
         const extractPrice = (text) => {
           const priceRegexes = [
-            /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
-            /<span[^>]*class=["'][^"']*aok-offscreen[^"']*["'][^>]*>([\d.,$€£]+)<\/span>/i,
+            // Matches: <span class="aok-offscreen"> $69.81 with 30 percent savings </span>
+            // Uses [^<]*? to skip text before the number, captures the number, then ignores text after
+            /<span[^>]*class=["'][^"']*aok-offscreen[^"']*["'][^>]*>[^<]*?([\d.,$€£]+)[^<]*?<\/span>/i,
+            // Matches: <span class="a-offscreen">$69.81</span> (Strict)
+            /<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>\s*([\d.,$€£]+)\s*<\/span>/i,
+            // Fallbacks
             /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\d.,]+)<\/span>/i,
             /id="priceblock_ourprice"[^>]*>([\d.,$€£]+)</i,
             /id="priceblock_dealprice"[^>]*>([\d.,$€£]+)</i
           ];
+
           for (const rx of priceRegexes) {
             const match = text.match(rx);
-            if (match && match[1]) return match[1].trim();
+            if (match && match[1]) {
+               // Cleanup: Ensure we don't return just a dot or comma
+               const val = match[1].trim();
+               if (/\d/.test(val)) return val;
+            }
           }
           return "N/A";
         };
@@ -213,14 +222,14 @@ export default {
         }), {
           headers: {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev",
+            "Access-Control-Allow-Origin": "*",
           },
         });
 
       } catch (error) {
         return new Response(JSON.stringify({ error: error.message }), {
           status: 500,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "https://awsscraper.xiliourt.workers.dev" },
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
         });
       }
     }
@@ -238,6 +247,3 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-
-
