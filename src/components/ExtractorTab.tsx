@@ -207,7 +207,7 @@ const BROWSER_SCRIPT = `(async function() {
 })();`;
 
 export const ExtractorTab: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'worker' | 'browser'>('worker');
+  const [activeTab, setActiveTab] = useState<'worker' | 'browser' | 'extension'>('worker');
 
   // Fetcher State
   const [fetchUrl, setFetchUrl] = useState('');
@@ -425,6 +425,12 @@ export const ExtractorTab: React.FC = () => {
         >
            Browser Console (Manual)
         </button>
+         <button 
+           onClick={() => setActiveTab('extension')}
+           className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'extension' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+        >
+           Chrome Extension
+        </button>
       </div>
       
       {activeTab === 'worker' ? (
@@ -597,7 +603,7 @@ export const ExtractorTab: React.FC = () => {
                 </div>
             )}
         </>
-      ) : (
+      ) : activeTab === 'browser' ? (
           <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-sm overflow-hidden animate-fade-in">
               <div className="p-6 border-b border-slate-700">
                   <h2 className="text-xl font-semibold text-white mb-2">Browser Console Script</h2>
@@ -643,6 +649,55 @@ export const ExtractorTab: React.FC = () => {
                   </pre>
               </div>
           </div>
+      ) : (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-sm animate-fade-in p-8">
+            <div className="flex flex-col md:flex-row gap-8 items-start">
+                <div className="flex-1 space-y-4">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-indigo-500/10 p-2 rounded-lg">
+                            <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                        </div>
+                        <h2 className="text-2xl font-bold text-white">Browser Extension</h2>
+                    </div>
+                    
+                    <p className="text-slate-300 leading-relaxed">
+                        For users who extract data frequently, we offer a standalone Chrome Extension. 
+                        This runs locally in your browser, bypassing many anti-bot checks associated with cloud scraping.
+                    </p>
+
+                    <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 space-y-3">
+                         <h3 className="font-semibold text-emerald-400 text-sm uppercase tracking-wide">Installation Instructions</h3>
+                         <ol className="list-decimal list-inside space-y-2 text-sm text-slate-300">
+                             <li>Download the extension file below (<code className="bg-slate-800 px-1 rounded text-xs text-slate-400">.crx</code>).</li>
+                             <li>Open Chrome and navigate to <code className="text-emerald-300 cursor-pointer hover:underline" onClick={() => navigator.clipboard.writeText('chrome://extensions')}>chrome://extensions</code>.</li>
+                             <li>Enable <strong>Developer mode</strong> in the top right corner.</li>
+                             <li>Drag and drop the downloaded file onto the page to install.</li>
+                         </ol>
+                    </div>
+
+                    <a 
+                      href="/AmazonBrowserExt.crx" 
+                      download="AmazonBrowserExt.crx"
+                      className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        Download Extension (.crx)
+                    </a>
+                </div>
+
+                 <div className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-6 flex flex-col justify-center items-center text-center space-y-4">
+                    <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center">
+                         <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    </div>
+                    <div>
+                        <h4 className="font-medium text-white">Manual Sideloading</h4>
+                        <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                            Since this extension is not in the Chrome Web Store, you must manually allow it. Chrome may warn you about extensions from unknown sources.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
       )}
     </div>
   );
